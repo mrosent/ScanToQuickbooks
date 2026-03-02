@@ -17,6 +17,13 @@ import { getCurrentScan, setCurrentScan } from "../lib/scanStore";
 import { saveScan } from "../lib/storage";
 import type { ScannedDocument } from "../lib/types";
 
+function toDisplayString(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  return JSON.stringify(val);
+}
+
 function formatTaggedContent(content: string): string {
   return content
     .replace(/<([a-z_]+)(?:\s+name="([^"]*)")?>/gi, (_, tag, name) => {
@@ -60,11 +67,9 @@ export default function PreviewScreen() {
     const scan = getCurrentScan();
     setDocument(scan);
     if (scan) {
-      setEditedContent(
-        scan.formattedContent
-          ? formatTaggedContent(scan.formattedContent)
-          : scan.rawText
-      );
+      const formatted = typeof scan.formattedContent === "string" ? scan.formattedContent : "";
+      const raw = typeof scan.rawText === "string" ? scan.rawText : "";
+      setEditedContent(formatted ? formatTaggedContent(formatted) : raw);
     } else {
       router.back();
     }
@@ -131,10 +136,10 @@ export default function PreviewScreen() {
         <View style={styles.headerCenter}>
           <DocumentTypeIcon type={document.type} />
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {document.title}
+            {toDisplayString(document.title)}
           </Text>
           <Text style={styles.headerSubtitle}>
-            {document.type.replace("_", " ")} • {document.detectedLanguage}
+            {toDisplayString(document.type).replace("_", " ")} • {toDisplayString(document.detectedLanguage)}
           </Text>
         </View>
       </View>
@@ -160,8 +165,8 @@ export default function PreviewScreen() {
             <View style={styles.fieldsGrid}>
               {document.fields.map((field, i) => (
                 <View key={i} style={styles.fieldRow}>
-                  <Text style={styles.fieldLabel}>{field.label}</Text>
-                  <Text style={styles.fieldValue}>{field.value}</Text>
+                  <Text style={styles.fieldLabel}>{toDisplayString(field?.label)}</Text>
+                  <Text style={styles.fieldValue}>{toDisplayString(field?.value)}</Text>
                 </View>
               ))}
             </View>
@@ -191,7 +196,7 @@ export default function PreviewScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Raw Text</Text>
             <View style={styles.rawTextBox}>
-              <Text style={styles.rawText}>{document.rawText}</Text>
+              <Text style={styles.rawText}>{toDisplayString(document.rawText)}</Text>
             </View>
           </View>
         )}

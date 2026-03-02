@@ -7,6 +7,7 @@ import {
   Image,
   Alert,
   ActivityIndicator,
+  ScrollView,
   type LayoutChangeEvent,
   type GestureResponderEvent,
 } from "react-native";
@@ -15,8 +16,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
-import { scanDocumentWithAI, getFriendlyErrorMessage } from "../../lib/scanService";
+import { scanDocumentWithAI, scanMultiPageReceipt, getFriendlyErrorMessage } from "../../lib/scanService";
 import { setCurrentScan } from "../../lib/scanStore";
+import * as FileSystem from "expo-file-system/legacy";
 
 export default function DashboardScreen() {
   type CropHandle =
@@ -30,7 +32,9 @@ export default function DashboardScreen() {
     | "bottomRight";
 
   const router = useRouter();
+  const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isManipulating, setIsManipulating] = useState(false);
@@ -56,6 +60,7 @@ export default function DashboardScreen() {
     height: number;
   } | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const multiCaptureDirRef = useRef<string | null>(null);
 
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -95,7 +100,24 @@ export default function DashboardScreen() {
       });
 
       if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
+        const uri = result.assets[0].uri;
+        if (captureMode === "multi") {
+          try {
+            if (!multiCaptureDirRef.current) {
+              multiCaptureDirRef.current = `${FileSystem.cacheDirectory}multi_capture_${Date.now()}/`;
+              await FileSystem.makeDirectoryAsync(multiCaptureDirRef.current, { intermediates: true });
+            }
+            const dir = multiCaptureDirRef.current;
+            const ext = uri.toLowerCase().includes(".png") ? "png" : "jpg";
+            const destUri = `${dir}photo_${capturedPhotos.length}.${ext}`;
+            await FileSystem.copyAsync({ from: uri, to: destUri });
+            setCapturedPhotos((prev) => [...prev, destUri]);
+          } catch {
+            setCapturedPhotos((prev) => [...prev, uri]);
+          }
+        } else {
+          setImageUri(uri);
+        }
       }
     } catch (error) {
       Alert.alert(
@@ -111,7 +133,7 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleUploadImage = async () => {
+  const handleAddPhotoFromGallery = async () => {
     setIsLoading(true);
     try {
       const hasPermission = await requestMediaLibraryPermission();
@@ -125,7 +147,20 @@ export default function DashboardScreen() {
       });
 
       if (!result.canceled && result.assets[0]) {
-        setImageUri(result.assets[0].uri);
+        const uri = result.assets[0].uri;
+        try {
+          if (!multiCaptureDirRef.current) {
+            multiCaptureDirRef.current = `${FileSystem.cacheDirectory}multi_capture_${Date.now()}/`;
+            await FileSystem.makeDirectoryAsync(multiCaptureDirRef.current, { intermediates: true });
+          }
+          const dir = multiCaptureDirRef.current;
+          const ext = uri.toLowerCase().includes(".png") ? "png" : "jpg";
+          const destUri = `${dir}photo_${capturedPhotos.length}.${ext}`;
+          await FileSystem.copyAsync({ from: uri, to: destUri });
+          setCapturedPhotos((prev) => [...prev, destUri]);
+        } catch {
+          setCapturedPhotos((prev) => [...prev, uri]);
+        }
       }
     } catch (error) {
       Alert.alert("Error", "Failed to pick image. Please try again.");
@@ -134,12 +169,63 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleClearImage = () => {
+  const handleDiscardMulti = () => {
+    setCapturedPhotos([]);
     setImageUri(null);
     setIsCropMode(false);
     setCropRect(null);
     setImageSize(null);
     setPreviewLayout(null);
+    multiCaptureDirRef.current = null;
+  };
+
+  const handleRemovePhoto = (index: number) => {
+    setCapturedPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleCapturePress = () => {
+    if (captureMode === "multi" && capturedPhotos.length > 0) {
+      handleTakePhoto();
+    } else {
+      handleTakePhoto();
+    }
+  };
+
+  const handleUploadImage = async () => {
+    if (captureMode === "multi") {
+      await handleAddPhotoFromGallery();
+    } else {
+      setIsLoading(true);
+      try {
+        const hasPermission = await requestMediaLibraryPermission();
+        if (!hasPermission) return;
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images"],
+          allowsEditing: true,
+          aspect: [3, 4],
+          quality: 1,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+          setImageUri(result.assets[0].uri);
+        }
+      } catch (error) {
+        Alert.alert("Error", "Failed to pick image. Please try again.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleClearImage = () => {
+    setImageUri(null);
+    setCapturedPhotos([]);
+    setIsCropMode(false);
+    setCropRect(null);
+    setImageSize(null);
+    setPreviewLayout(null);
+    multiCaptureDirRef.current = null;
   };
 
   const handleRotateLeft = async () => {
@@ -227,6 +313,13 @@ export default function DashboardScreen() {
   useEffect(() => {
     cropRectRef.current = cropRect;
   }, [cropRect]);
+
+  useEffect(() => {
+    if (captureMode === "single") {
+      setCapturedPhotos([]);
+      multiCaptureDirRef.current = null;
+    }
+  }, [captureMode]);
 
   const handlePreviewLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -370,12 +463,33 @@ export default function DashboardScreen() {
   };
 
   const handleExtractText = async () => {
-    if (!imageUri) return;
+    if (imageUri) {
+      setIsExtracting(true);
+      try {
+        const document = await scanDocumentWithAI(imageUri);
+        if (document) {
+          setCurrentScan(document);
+          router.push("/preview");
+        } else {
+          Alert.alert("Error", "Could not extract text from the document.");
+        }
+      } catch (error) {
+        Alert.alert("Error", getFriendlyErrorMessage(error));
+      } finally {
+        setIsExtracting(false);
+      }
+    }
+  };
+
+  const handleExtractFromMulti = async () => {
+    if (capturedPhotos.length === 0) return;
     setIsExtracting(true);
     try {
-      const document = await scanDocumentWithAI(imageUri);
+      const document = await scanMultiPageReceipt(capturedPhotos);
       if (document) {
         setCurrentScan(document);
+        setCapturedPhotos([]);
+        multiCaptureDirRef.current = null;
         router.push("/preview");
       } else {
         Alert.alert("Error", "Could not extract text from the document.");
@@ -397,7 +511,63 @@ export default function DashboardScreen() {
             <View style={styles.cornerTR} />
             <View style={styles.cornerBL} />
             <View style={styles.cornerBR} />
-            {imageUri ? (
+            {capturedPhotos.length > 0 && !imageUri ? (
+              <View style={styles.multiPhotoContainer}>
+                <Text style={styles.multiPhotoLabel}>
+                  {capturedPhotos.length} photo{capturedPhotos.length > 1 ? "s" : ""} — AI will merge overlapping content
+                </Text>
+                <ScrollView
+                  horizontal
+                  style={styles.multiPhotoScroll}
+                  contentContainerStyle={styles.multiPhotoScrollContent}
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {capturedPhotos.map((uri, i) => (
+                    <View key={i} style={styles.multiPhotoItem}>
+                      <Image
+                        source={{ uri }}
+                        style={styles.multiPhotoThumb}
+                        resizeMode="cover"
+                      />
+                      <Pressable
+                        style={styles.multiPhotoRemove}
+                        onPress={() => handleRemovePhoto(i)}
+                      >
+                        <Ionicons name="close-circle" size={24} color="#ef4444" />
+                      </Pressable>
+                    </View>
+                  ))}
+                </ScrollView>
+                <View style={styles.multiPhotoActions}>
+                  <Pressable
+                    style={styles.multiPhotoButton}
+                    onPress={handleTakePhoto}
+                    disabled={isLoading || isExtracting}
+                  >
+                    <Ionicons name="add-circle-outline" size={22} color="#38bdf8" />
+                    <Text style={styles.multiPhotoButtonText}>Add photo</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.multiPhotoButton, styles.multiPhotoButtonPrimary]}
+                    onPress={handleExtractFromMulti}
+                    disabled={isExtracting}
+                  >
+                    {isExtracting ? (
+                      <ActivityIndicator size="small" color="#0f172a" />
+                    ) : (
+                      <>
+                        <Ionicons name="text-outline" size={22} color="#0f172a" />
+                        <Text style={[styles.multiPhotoButtonText, styles.multiPhotoButtonPrimaryText]}>Extract</Text>
+                      </>
+                    )}
+                  </Pressable>
+                  <Pressable style={styles.multiPhotoButton} onPress={handleDiscardMulti} disabled={isExtracting}>
+                    <Ionicons name="trash-outline" size={22} color="#94a3b8" />
+                    <Text style={styles.multiPhotoButtonText}>Discard</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : imageUri ? (
               <View style={styles.previewContainer} onLayout={handlePreviewLayout}>
                 <Image
                   source={{ uri: imageUri }}
@@ -565,13 +735,13 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {imageUri && (
+        {(imageUri || capturedPhotos.length > 0) && (
           <Pressable
             style={[
               styles.extractButton,
               (isLoading || isExtracting || isManipulating) && styles.buttonDisabled,
             ]}
-            onPress={handleExtractText}
+            onPress={imageUri ? handleExtractText : handleExtractFromMulti}
             disabled={isLoading || isExtracting || isManipulating || isCropMode}
           >
             {isExtracting ? (
@@ -593,16 +763,40 @@ export default function DashboardScreen() {
 
       {/* Quick actions */}
       <View style={styles.quickActions}>
+        <View style={styles.captureModeToggle}>
+          <Pressable
+            style={[styles.toggleOption, captureMode === "single" && styles.toggleOptionActive]}
+            onPress={() => setCaptureMode("single")}
+          >
+            <Text style={[styles.toggleText, captureMode === "single" && styles.toggleTextActive]}>
+              Single Page
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.toggleOption, captureMode === "multi" && styles.toggleOptionActive]}
+            onPress={() => setCaptureMode("multi")}
+          >
+            <Text style={[styles.toggleText, captureMode === "multi" && styles.toggleTextActive]}>
+              Multi Page
+            </Text>
+          </Pressable>
+        </View>
         <View style={styles.actionRow}>
           <Pressable
             style={styles.actionCard}
-            onPress={handleTakePhoto}
+            onPress={handleCapturePress}
             disabled={isLoading || isExtracting}
           >
             <View style={styles.actionIconWrapper}>
-              <Ionicons name="document-text-outline" size={24} color="#38bdf8" />
+              <Ionicons
+                name={captureMode === "single" ? "document-text-outline" : "add-circle-outline"}
+                size={24}
+                color="#38bdf8"
+              />
             </View>
-            <Text style={styles.actionLabel}>Single Page</Text>
+            <Text style={styles.actionLabel}>
+              {captureMode === "single" ? "Single Page" : capturedPhotos.length > 0 ? "Add photo" : "Multi Page"}
+            </Text>
           </Pressable>
           <Pressable
             style={styles.actionCard}
@@ -616,6 +810,13 @@ export default function DashboardScreen() {
           </Pressable>
         </View>
       </View>
+
+      {isExtracting && (
+        <View style={styles.processingOverlay}>
+          <ActivityIndicator size="large" color="#38bdf8" />
+          <Text style={styles.processingText}>Analyzing with AI...</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -693,6 +894,69 @@ const styles = StyleSheet.create({
     borderRightWidth: 3,
     borderColor: "#38bdf8",
     borderRadius: 4,
+  },
+  multiPhotoContainer: {
+    flex: 1,
+    width: "100%",
+    padding: 12,
+  },
+  multiPhotoLabel: {
+    fontSize: 12,
+    color: "#94a3b8",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  multiPhotoScroll: {
+    flexGrow: 0,
+    marginBottom: 16,
+  },
+  multiPhotoScrollContent: {
+    gap: 12,
+    paddingHorizontal: 4,
+  },
+  multiPhotoItem: {
+    width: 80,
+    height: 100,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#0f172a",
+  },
+  multiPhotoThumb: {
+    width: "100%",
+    height: "100%",
+  },
+  multiPhotoRemove: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+  },
+  multiPhotoActions: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+  },
+  multiPhotoButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  multiPhotoButtonPrimary: {
+    backgroundColor: "#22c55e",
+    borderColor: "#22c55e",
+  },
+  multiPhotoButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#f8fafc",
+  },
+  multiPhotoButtonPrimaryText: {
+    color: "#0f172a",
   },
   previewContainer: {
     flex: 1,
@@ -825,6 +1089,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 0,
     paddingBottom: 10,
+  },
+  captureModeToggle: {
+    flexDirection: "row",
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  toggleOption: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  toggleOptionActive: {
+    backgroundColor: "#38bdf8",
+  },
+  toggleText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#94a3b8",
+  },
+  toggleTextActive: {
+    color: "#0f172a",
+  },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+    elevation: 100,
+  },
+  processingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#f8fafc",
   },
   actionRow: {
     flexDirection: "row",
