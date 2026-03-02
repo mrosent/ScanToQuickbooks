@@ -16,7 +16,11 @@ function HeaderLogo() {
 
 function HeaderTitle() {
   const pathname = usePathname();
-  const title = pathname.includes("history") ? "History" : "Dashboard";
+  const title = pathname.includes("history")
+    ? "History"
+    : pathname.includes("about")
+      ? "About"
+      : "Dashboard";
   return <Text style={{ fontSize: 17, fontWeight: "600", color: "#000000" }}>{title}</Text>;
 }
 

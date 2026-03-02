@@ -35,4 +35,10 @@ export interface StoredScan {
   id: string;
   document: ScannedDocument;
   createdAt: string;
+  /** Whether this scan is PIN-protected. When true, document is minimal metadata. */
+  isLocked?: boolean;
+  /** Encrypted document payload (base64). Only present when isLocked. */
+  encryptedPayload?: string;
+  /** Salt for key derivation (base64). Only present when isLocked. */
+  lockSalt?: string;
 }

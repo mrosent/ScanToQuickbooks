@@ -12,9 +12,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { getStoredScans, deleteScan } from "../../lib/storage";
+import { getStoredScans, deleteScan, lockScans, unlockScan, removeLock } from "../../lib/storage";
 import { setCurrentScan } from "../../lib/scanStore";
 import { ExportModal } from "../../components/ExportModal";
+import { PinModal } from "../../components/PinModal";
 import { isMarkdown } from "../../lib/documentFormat";
 import type { StoredScan } from "../../lib/types";
 
@@ -41,17 +42,31 @@ function formatDate(iso: string) {
 function ScanItemCard({
   item,
   onPress,
+  selected,
+  selectingMode,
+  onToggleSelect,
 }: {
   item: StoredScan;
   onPress: () => void;
+  selected?: boolean;
+  selectingMode?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const doc = item.document;
+  const isLocked = item.isLocked === true;
   return (
     <Pressable
-      style={styles.scanCard}
-      onPress={onPress}
+      style={[styles.scanCard, selected && styles.scanCardSelected]}
+      onPress={selectingMode ? onToggleSelect : onPress}
     >
-      {doc.imageUri ? (
+      {selectingMode && (
+        <View style={styles.selectWrap}>
+          <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+            {selected && <Ionicons name="checkmark" size={16} color="#0f172a" />}
+          </View>
+        </View>
+      )}
+      {doc.imageUri && !isLocked ? (
         <Image
           source={{ uri: doc.imageUri }}
           style={styles.scanCardThumbnail}
@@ -59,13 +74,25 @@ function ScanItemCard({
         />
       ) : (
         <View style={styles.scanCardThumbnailPlaceholder}>
-          <Ionicons name="document-text" size={28} color="#64748b" />
+          <Ionicons
+            name={isLocked ? "lock-closed" : "document-text"}
+            size={28}
+            color={isLocked ? "#f59e0b" : "#64748b"}
+          />
         </View>
       )}
       <View style={styles.scanCardContent}>
-        <Text style={styles.scanCardTitle} numberOfLines={1}>
-          {doc.title}
-        </Text>
+        <View style={styles.scanCardTitleRow}>
+          <Text style={styles.scanCardTitle} numberOfLines={1}>
+            {doc.title}
+          </Text>
+          {isLocked && (
+            <View style={styles.lockedBadge}>
+              <Ionicons name="lock-closed" size={10} color="#f59e0b" />
+              <Text style={styles.lockedBadgeText}>Locked</Text>
+            </View>
+          )}
+        </View>
         <Text style={styles.scanCardDate}>{formatDate(item.createdAt)}</Text>
         <View style={styles.scanCardMeta}>
           <Text style={styles.scanCardMetaText}>
@@ -73,12 +100,14 @@ function ScanItemCard({
           </Text>
         </View>
       </View>
-      <Ionicons
-        name="chevron-forward"
-        size={20}
-        color="#64748b"
-        style={styles.scanCardChevron}
-      />
+      {!selectingMode && (
+        <Ionicons
+          name="chevron-forward"
+          size={20}
+          color="#64748b"
+          style={styles.scanCardChevron}
+        />
+      )}
     </Pressable>
   );
 }
@@ -88,6 +117,15 @@ export default function HistoryScreen() {
   const [scans, setScans] = useState<StoredScan[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [exportItem, setExportItem] = useState<StoredScan | null>(null);
+  const [selectingMode, setSelectingMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pinModal, setPinModal] = useState<{
+    visible: boolean;
+    mode: "lock" | "unlock";
+    ids: string[];
+    item?: StoredScan;
+    removeLockOnly?: boolean;
+  }>({ visible: false, mode: "lock", ids: [] });
 
   const loadScans = useCallback(async () => {
     const data = await getStoredScans();
@@ -106,7 +144,77 @@ export default function HistoryScreen() {
     setRefreshing(false);
   };
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleLockSelected = () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const unlockable = ids.filter((id) => scans.find((s) => s.id === id)?.isLocked);
+    if (unlockable.length > 0) {
+      Alert.alert("Cannot lock", "Some selected documents are already locked. Unlock them first.");
+      return;
+    }
+    setPinModal({ visible: true, mode: "lock", ids });
+  };
+
+  const handlePinConfirm = async (pin: string) => {
+    if (pinModal.mode === "lock") {
+      await lockScans(pinModal.ids, pin);
+      setSelectingMode(false);
+      setSelectedIds(new Set());
+      loadScans();
+    } else {
+      const item = pinModal.item;
+      if (!item) return;
+      if (pinModal.removeLockOnly) {
+        const ok = await removeLock(item.id, pin);
+        if (!ok) throw new Error("Invalid PIN");
+        loadScans();
+      } else {
+        const unlocked = await unlockScan(item.id, pin);
+        if (!unlocked) throw new Error("Invalid PIN");
+        setCurrentScan(unlocked.document, unlocked.id);
+        router.push("/preview");
+        loadScans();
+      }
+    }
+    setPinModal({ visible: false, mode: "lock", ids: [] });
+  };
+
   const handlePress = (item: StoredScan) => {
+    if (item.isLocked) {
+      Alert.alert(item.document.title, "This document is locked.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unlock & Open",
+          onPress: () => setPinModal({ visible: true, mode: "unlock", ids: [], item }),
+        },
+        {
+          text: "Remove PIN",
+          onPress: () =>
+            setPinModal({
+              visible: true,
+              mode: "unlock",
+              ids: [],
+              item,
+              removeLockOnly: true,
+            }),
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => handleDelete(item),
+        },
+      ]);
+      return;
+    }
     Alert.alert(item.document.title, "What would you like to do?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -119,6 +227,10 @@ export default function HistoryScreen() {
       {
         text: "Export",
         onPress: () => setExportItem(item),
+      },
+      {
+        text: "Lock with PIN",
+        onPress: () => setPinModal({ visible: true, mode: "lock", ids: [item.id] }),
       },
       {
         text: "Delete",
@@ -183,7 +295,30 @@ export default function HistoryScreen() {
       <View style={styles.listSection}>
         <View style={styles.listHeader}>
           <Text style={styles.sectionLabel}>Recent Scans</Text>
+          <Pressable
+            style={styles.selectButton}
+            onPress={() => {
+              setSelectingMode((m) => !m);
+              if (selectingMode) setSelectedIds(new Set());
+            }}
+          >
+            <Text style={styles.selectButtonText}>
+              {selectingMode ? "Cancel" : "Select"}
+            </Text>
+          </Pressable>
         </View>
+
+        {selectingMode && selectedIds.size > 0 && (
+          <View style={styles.lockBar}>
+            <Text style={styles.lockBarText}>
+              {selectedIds.size} selected
+            </Text>
+            <Pressable style={styles.lockBarButton} onPress={handleLockSelected}>
+              <Ionicons name="lock-closed-outline" size={18} color="#0f172a" />
+              <Text style={styles.lockBarButtonText}>Lock with PIN</Text>
+            </Pressable>
+          </View>
+        )}
 
         <FlatList
           data={scans}
@@ -192,6 +327,9 @@ export default function HistoryScreen() {
             <ScanItemCard
               item={item}
               onPress={() => handlePress(item)}
+              selected={selectedIds.has(item.id)}
+              selectingMode={selectingMode}
+              onToggleSelect={() => toggleSelect(item.id)}
             />
           )}
           contentContainerStyle={[
@@ -226,6 +364,29 @@ export default function HistoryScreen() {
           onClose={() => setExportItem(null)}
         />
       )}
+
+      <PinModal
+        visible={pinModal.visible}
+        mode={pinModal.mode}
+        title={
+          pinModal.removeLockOnly
+            ? "Enter PIN to remove protection"
+            : pinModal.mode === "unlock"
+              ? "Enter PIN to open"
+              : "Create PIN"
+        }
+        subtitle={
+          pinModal.mode === "lock" && pinModal.ids.length > 1
+            ? `Lock ${pinModal.ids.length} documents`
+            : pinModal.mode === "lock"
+              ? "Protect this document with a PIN"
+              : undefined
+        }
+        requireConfirm={pinModal.mode === "lock"}
+        confirmLabel={pinModal.removeLockOnly ? "Remove PIN" : undefined}
+        onConfirm={handlePinConfirm}
+        onCancel={() => setPinModal({ visible: false, mode: "lock", ids: [] })}
+      />
     </SafeAreaView>
   );
 }
@@ -292,6 +453,44 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
+  selectButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  selectButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#38bdf8",
+  },
+  lockBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  lockBarText: {
+    fontSize: 14,
+    color: "#94a3b8",
+  },
+  lockBarButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#38bdf8",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  lockBarButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
   listContent: {
     paddingBottom: 40,
   },
@@ -307,6 +506,46 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#334155",
+  },
+  scanCardSelected: {
+    borderColor: "#38bdf8",
+    backgroundColor: "#1e3a4a",
+  },
+  selectWrap: {
+    marginRight: 12,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#64748b",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxSelected: {
+    borderColor: "#38bdf8",
+    backgroundColor: "#38bdf8",
+  },
+  scanCardTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  lockedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(245, 158, 11, 0.2)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  lockedBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#f59e0b",
+    textTransform: "uppercase",
   },
   scanCardThumbnail: {
     width: 56,
