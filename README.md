@@ -1,4 +1,4 @@
-# Scanner Vibe
+# POS Scanner
 
 A React Native + Expo document scanner with **OpenAI-powered text extraction** and smart document type detection.
 

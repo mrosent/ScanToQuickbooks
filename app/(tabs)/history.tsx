@@ -14,7 +14,20 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { getStoredScans, deleteScan } from "../../lib/storage";
 import { setCurrentScan } from "../../lib/scanStore";
+import { ExportModal } from "../../components/ExportModal";
+import { isMarkdown } from "../../lib/documentFormat";
 import type { StoredScan } from "../../lib/types";
+
+function formatTaggedContent(content: string): string {
+  return content
+    .replace(/<([a-z_]+)(?:\s+name="([^"]*)")?>/gi, (_, tag, name) => {
+      const label = name ? ` [${name}]` : "";
+      return `\n▸ ${tag.toUpperCase()}${label}:\n`;
+    })
+    .replace(/<\/[a-z_]+>/gi, "")
+    .replace(/<([a-z_]+)>/gi, (_, tag) => `\n▸ ${tag.toUpperCase()}: `)
+    .trim();
+}
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -28,18 +41,15 @@ function formatDate(iso: string) {
 function ScanItemCard({
   item,
   onPress,
-  onLongPress,
 }: {
   item: StoredScan;
   onPress: () => void;
-  onLongPress: () => void;
 }) {
   const doc = item.document;
   return (
     <Pressable
       style={styles.scanCard}
       onPress={onPress}
-      onLongPress={onLongPress}
     >
       {doc.imageUri ? (
         <Image
@@ -77,6 +87,7 @@ export default function HistoryScreen() {
   const router = useRouter();
   const [scans, setScans] = useState<StoredScan[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [exportItem, setExportItem] = useState<StoredScan | null>(null);
 
   const loadScans = useCallback(async () => {
     const data = await getStoredScans();
@@ -96,11 +107,40 @@ export default function HistoryScreen() {
   };
 
   const handlePress = (item: StoredScan) => {
-    setCurrentScan(item.document);
-    router.push("/preview");
+    Alert.alert(item.document.title, "What would you like to do?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Edit",
+        onPress: () => {
+          setCurrentScan(item.document, item.id);
+          router.push("/preview");
+        },
+      },
+      {
+        text: "Export",
+        onPress: () => setExportItem(item),
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => handleDelete(item),
+      },
+    ]);
   };
 
-  const handleLongPress = (item: StoredScan) => {
+  const getExportContent = (item: StoredScan): string => {
+    const formatted = item.document.formattedContent || "";
+    const isEditorFormat =
+      formatted.startsWith("<") && /<(p|div|span|strong|em|h[1-6]|ul|ol|li|br)\b/i.test(formatted);
+    const isMarkdownContent = isMarkdown(formatted);
+    return formatted
+      ? isEditorFormat || isMarkdownContent
+        ? formatted
+        : formatTaggedContent(formatted)
+      : item.document.rawText || "";
+  };
+
+  const handleDelete = (item: StoredScan) => {
     Alert.alert(
       "Delete Scan",
       `Delete "${item.document.title}"?`,
@@ -152,7 +192,6 @@ export default function HistoryScreen() {
             <ScanItemCard
               item={item}
               onPress={() => handlePress(item)}
-              onLongPress={() => handleLongPress(item)}
             />
           )}
           contentContainerStyle={[
@@ -178,6 +217,15 @@ export default function HistoryScreen() {
           showsVerticalScrollIndicator={false}
         />
       </View>
+
+      {exportItem && (
+        <ExportModal
+          visible
+          document={exportItem.document}
+          content={getExportContent(exportItem)}
+          onClose={() => setExportItem(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }

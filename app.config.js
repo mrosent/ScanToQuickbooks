@@ -2,18 +2,18 @@ require("dotenv").config();
 
 export default {
   expo: {
-    name: "Scanner Vibe",
-    slug: "scanner-vibe",
+    name: "POS Scanner",
+    slug: "pos-scanner",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
-    scheme: "scannervibe",
+    scheme: "posscanner",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     splash: {
       image: "./assets/splash-icon.png",
       resizeMode: "contain",
-      backgroundColor: "#0f172a",
+      backgroundColor: "#22c55e",
     },
     ios: {
       supportsTablet: true,
@@ -22,7 +22,7 @@ export default {
     android: {
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon.png",
-        backgroundColor: "#0f172a",
+        backgroundColor: "#22c55e",
       },
       package: "com.scannervibe.app",
     },
@@ -37,9 +37,9 @@ export default {
         "expo-image-picker",
         {
           photosPermission:
-            "Scanner Vibe needs access to your photos to upload and scan documents.",
+            "POS Scanner needs access to your photos to upload and scan documents.",
           cameraPermission:
-            "Scanner Vibe needs access to your camera to scan documents.",
+            "POS Scanner needs access to your camera to scan documents.",
         },
       ],
     ],

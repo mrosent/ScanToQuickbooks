@@ -8,14 +8,32 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { getCurrentScan, setCurrentScan } from "../lib/scanStore";
-import { saveScan } from "../lib/storage";
+import { getCurrentScan, setCurrentScan, getEditingStoredId } from "../lib/scanStore";
+import { saveScan, updateScan } from "../lib/storage";
+import { DocumentEditorModal } from "../components/DocumentEditorModal";
+import { ExportModal } from "../components/ExportModal";
+import { isMarkdown } from "../lib/documentFormat";
 import type { ScannedDocument } from "../lib/types";
+
+function contentForPreview(content: string): string {
+  if (!content) return "";
+  if (content.includes("<") && content.includes(">")) {
+    return content
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return content;
+}
 
 function toDisplayString(val: unknown): string {
   if (val == null) return "";
@@ -62,14 +80,28 @@ export default function PreviewScreen() {
   const [document, setDocument] = useState<ScannedDocument | null>(null);
   const [editedContent, setEditedContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [editingStoredId, setEditingStoredId] = useState<string | null>(null);
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [exportVisible, setExportVisible] = useState(false);
 
   useEffect(() => {
     const scan = getCurrentScan();
+    const storedId = getEditingStoredId();
     setDocument(scan);
+    setEditingStoredId(storedId);
     if (scan) {
       const formatted = typeof scan.formattedContent === "string" ? scan.formattedContent : "";
       const raw = typeof scan.rawText === "string" ? scan.rawText : "";
-      setEditedContent(formatted ? formatTaggedContent(formatted) : raw);
+      const isEditorFormat =
+        formatted.startsWith("<") && /<(p|div|span|strong|em|h[1-6]|ul|ol|li|br)\b/i.test(formatted);
+      const isMarkdownContent = isMarkdown(formatted);
+      setEditedContent(
+        formatted
+          ? isEditorFormat || isMarkdownContent
+            ? formatted
+            : formatTaggedContent(formatted)
+          : raw
+      );
     } else {
       router.back();
     }
@@ -85,14 +117,21 @@ export default function PreviewScreen() {
         formattedContent: editedContent,
         rawText: editedContent || document.rawText,
       };
-      await saveScan({
-        id: `stored_${Date.now()}`,
-        document: toSave,
-        createdAt: new Date().toISOString(),
-      });
-      Alert.alert("Saved", "Document saved to history.", [
-        { text: "OK", onPress: () => router.replace("/(tabs)/history") },
-      ]);
+      if (editingStoredId) {
+        await updateScan(editingStoredId, toSave);
+        Alert.alert("Saved", "Document updated.", [
+          { text: "OK", onPress: () => router.replace("/(tabs)/history") },
+        ]);
+      } else {
+        await saveScan({
+          id: `stored_${Date.now()}`,
+          document: toSave,
+          createdAt: new Date().toISOString(),
+        });
+        Alert.alert("Saved", "Document saved to history.", [
+          { text: "OK", onPress: () => router.replace("/(tabs)/history") },
+        ]);
+      }
     } catch (error) {
       Alert.alert("Error", "Failed to save document.");
     } finally {
@@ -101,6 +140,21 @@ export default function PreviewScreen() {
   };
 
   const handleBack = () => router.back();
+
+  const handleCancel = () => {
+    if (editingStoredId) {
+      Alert.alert(
+        "Discard changes?",
+        "Your edits will not be saved.",
+        [
+          { text: "Keep Editing", style: "cancel" },
+          { text: "Discard", style: "destructive", onPress: () => router.back() },
+        ]
+      );
+    } else {
+      router.back();
+    }
+  };
 
   if (!document) {
     return (
@@ -112,25 +166,33 @@ export default function PreviewScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      {/* Floating Save - always on top */}
-      <Pressable
-        style={[styles.floatingSaveButton, isSaving && styles.buttonDisabled]}
-        onPress={handleSave}
-        disabled={isSaving}
-      >
-        {isSaving ? (
-          <ActivityIndicator size="small" color="#0f172a" />
-        ) : (
-          <>
-            <Ionicons name="save-outline" size={24} color="#0f172a" />
-            <Text style={styles.floatingSaveButtonText}>Save to History</Text>
-          </>
-        )}
-      </Pressable>
+      {/* Floating Save + Cancel - always on top */}
+      <View style={styles.floatingActions}>
+        <Pressable
+          style={styles.cancelFloatingButton}
+          onPress={handleCancel}
+        >
+          <Text style={styles.cancelFloatingButtonText}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.floatingSaveButton, isSaving && styles.buttonDisabled]}
+          onPress={handleSave}
+          disabled={isSaving}
+        >
+          {isSaving ? (
+            <ActivityIndicator size="small" color="#0f172a" />
+          ) : (
+            <>
+              <Ionicons name="save-outline" size={24} color="#0f172a" />
+              <Text style={styles.floatingSaveButtonText}>Save to History</Text>
+            </>
+          )}
+        </Pressable>
+      </View>
 
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={handleBack} style={styles.backButton}>
+        <Pressable onPress={editingStoredId ? handleCancel : handleBack} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#f8fafc" />
         </Pressable>
         <View style={styles.headerCenter}>
@@ -142,6 +204,9 @@ export default function PreviewScreen() {
             {toDisplayString(document.type).replace("_", " ")} • {toDisplayString(document.detectedLanguage)}
           </Text>
         </View>
+        <Pressable onPress={() => setExportVisible(true)} style={styles.exportButton}>
+          <Ionicons name="share-outline" size={24} color="#38bdf8" />
+        </Pressable>
       </View>
 
       <ScrollView
@@ -173,23 +238,42 @@ export default function PreviewScreen() {
           </View>
         )}
 
-        {/* Formatted content (editable preview) */}
+        {/* Formatted content - tap to open professional editor */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Formatted Document</Text>
-          <Text style={styles.contentHint}>Preview and edit before saving</Text>
-          <View style={styles.contentBox}>
-            <TextInput
-              style={styles.contentInput}
-              value={editedContent}
-              onChangeText={setEditedContent}
-              placeholder="No content extracted"
-              placeholderTextColor="#64748b"
-              multiline
-              editable
-              textAlignVertical="top"
-            />
-          </View>
+          <Text style={styles.contentHint}>Tap to open full document editor</Text>
+          <Pressable
+            style={styles.contentBox}
+            onPress={() => setEditorVisible(true)}
+          >
+            <Text style={styles.contentPreview} numberOfLines={8}>
+              {contentForPreview(editedContent) || "No content extracted"}
+            </Text>
+            <View style={styles.tapToEditRow}>
+              <Ionicons name="create-outline" size={18} color="#64748b" />
+              <Text style={styles.tapToEditText}>Tap to edit with formatting</Text>
+            </View>
+          </Pressable>
         </View>
+
+        <ExportModal
+          visible={exportVisible}
+          document={document}
+          content={editedContent}
+          onClose={() => setExportVisible(false)}
+        />
+
+        {editorVisible && (
+          <DocumentEditorModal
+            visible
+            content={editedContent}
+            onSave={(html) => {
+              setEditedContent(html);
+              setEditorVisible(false);
+            }}
+            onCancel={() => setEditorVisible(false)}
+          />
+        )}
 
         {/* Raw text (collapsed by default) */}
         {document.rawText && (
@@ -228,6 +312,10 @@ const styles = StyleSheet.create({
     padding: 8,
     marginRight: 8,
   },
+  exportButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
   headerCenter: {
     flex: 1,
     alignItems: "center",
@@ -235,11 +323,32 @@ const styles = StyleSheet.create({
   headerRight: {
     width: 40,
   },
-  floatingSaveButton: {
+  floatingActions: {
     position: "absolute",
     top: 60,
     left: 24,
     right: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    zIndex: 1000,
+    elevation: 10,
+  },
+  cancelFloatingButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    backgroundColor: "#1e293b",
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  cancelFloatingButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#94a3b8",
+  },
+  floatingSaveButton: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -248,8 +357,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 16,
-    zIndex: 1000,
-    elevation: 10,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -332,15 +439,26 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "#334155",
-    minHeight: 200,
+    minHeight: 160,
+    padding: 16,
   },
-  contentInput: {
+  contentPreview: {
     fontSize: 14,
     color: "#e2e8f0",
     lineHeight: 22,
-    padding: 16,
-    minHeight: 200,
-    maxHeight: 300,
+  },
+  tapToEditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#334155",
+  },
+  tapToEditText: {
+    fontSize: 13,
+    color: "#64748b",
   },
   rawTextBox: {
     backgroundColor: "#1e293b",

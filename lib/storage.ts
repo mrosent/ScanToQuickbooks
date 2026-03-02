@@ -33,6 +33,29 @@ export async function saveScan(scan: StoredScan): Promise<void> {
   await AsyncStorage.setItem(SCANS_KEY, JSON.stringify(scans));
 }
 
+export async function updateScan(id: string, document: StoredScan["document"]): Promise<void> {
+  const scans = await getStoredScans();
+  const idx = scans.findIndex((s) => s.id === id);
+  if (idx < 0) return;
+  let doc = document;
+  if (doc.imageUri && doc.imageUri.startsWith("file://")) {
+    try {
+      const ext = doc.imageUri.includes(".png") ? "png" : "jpg";
+      const destUri = `${FileSystem.documentDirectory}scans/${doc.id}.${ext}`;
+      const dir = `${FileSystem.documentDirectory}scans`;
+      const dirInfo = await FileSystem.getInfoAsync(dir);
+      if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+      await FileSystem.copyAsync({ from: doc.imageUri, to: destUri });
+      doc = { ...doc, imageUri: destUri };
+    } catch {
+      // Keep original URI if copy fails
+    }
+  }
+  const existing = scans[idx];
+  scans[idx] = { ...existing, document: doc };
+  await AsyncStorage.setItem(SCANS_KEY, JSON.stringify(scans));
+}
+
 export async function deleteScan(id: string): Promise<void> {
   const scans = await getStoredScans();
   const filtered = scans.filter((s) => s.id !== id);
