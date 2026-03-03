@@ -21,7 +21,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: "Dashboard",
+          title: "Scanner",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="scan-outline" size={size} color={color} />
           ),

@@ -45,6 +45,9 @@ export default {
     ],
     extra: {
       openaiApiKey: process.env.EXPO_PUBLIC_OPENAI_API_KEY,
+      "eas": {
+        "projectId": "7423f81b-534f-4096-a84c-66fd7ed28f9e"
+      },
     },
   },
 };

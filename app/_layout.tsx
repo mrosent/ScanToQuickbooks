@@ -20,7 +20,7 @@ function HeaderTitle() {
     ? "History"
     : pathname.includes("about")
       ? "About"
-      : "Dashboard";
+      : "Scanner";
   return <Text style={{ fontSize: 17, fontWeight: "600", color: "#000000" }}>{title}</Text>;
 }
 

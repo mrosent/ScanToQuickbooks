@@ -341,7 +341,7 @@ export default function HistoryScreen() {
               <Ionicons name="folder-open-outline" size={64} color="#334155" />
               <Text style={styles.emptyTitle}>No scans yet</Text>
               <Text style={styles.emptySubtitle}>
-                Scan a document on the Dashboard and save it here
+                Scan a document on the Scanner and save it here
               </Text>
             </View>
           }

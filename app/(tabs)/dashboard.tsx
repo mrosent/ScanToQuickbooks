@@ -18,6 +18,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import { scanDocumentWithAI, scanMultiPageReceipt, getFriendlyErrorMessage } from "../../lib/scanService";
 import { setCurrentScan } from "../../lib/scanStore";
+import { sampleVideoFrames } from "../../lib/videoFrames";
 import * as FileSystem from "expo-file-system/legacy";
 
 export default function DashboardScreen() {
@@ -37,6 +38,7 @@ export default function DashboardScreen() {
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isManipulating, setIsManipulating] = useState(false);
   const [isCropMode, setIsCropMode] = useState(false);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
@@ -166,6 +168,36 @@ export default function DashboardScreen() {
       Alert.alert("Error", "Failed to pick image. Please try again.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handlePickVideo = async () => {
+    setIsLoading(true);
+    setIsProcessingVideo(true);
+    try {
+      const hasPermission = await requestMediaLibraryPermission();
+      if (!hasPermission) return;
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["videos"],
+        allowsEditing: false,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const videoUri = result.assets[0].uri;
+        const frames = await sampleVideoFrames(videoUri);
+        if (frames.length === 0) {
+          Alert.alert("No Frames", "Could not extract frames from the video. Try a different video.");
+          return;
+        }
+        multiCaptureDirRef.current = frames[0].slice(0, frames[0].lastIndexOf("/") + 1);
+        setCapturedPhotos(frames);
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to process video. Please try again.");
+    } finally {
+      setIsLoading(false);
+      setIsProcessingVideo(false);
     }
   };
 
@@ -808,13 +840,27 @@ export default function DashboardScreen() {
             </View>
             <Text style={styles.actionLabel}>From Gallery</Text>
           </Pressable>
+          {captureMode === "multi" && (
+            <Pressable
+              style={styles.actionCard}
+              onPress={handlePickVideo}
+              disabled={isLoading || isExtracting}
+            >
+              <View style={styles.actionIconWrapper}>
+                <Ionicons name="videocam-outline" size={24} color="#38bdf8" />
+              </View>
+              <Text style={styles.actionLabel}>From Video</Text>
+            </Pressable>
+          )}
         </View>
       </View>
 
-      {isExtracting && (
+      {(isExtracting || isProcessingVideo) && (
         <View style={styles.processingOverlay}>
           <ActivityIndicator size="large" color="#38bdf8" />
-          <Text style={styles.processingText}>Analyzing with AI...</Text>
+          <Text style={styles.processingText}>
+            {isProcessingVideo ? "Extracting frames from video..." : "Analyzing with AI..."}
+          </Text>
         </View>
       )}
     </SafeAreaView>
@@ -1132,10 +1178,12 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: "row",
-    gap: 16,
+    flexWrap: "wrap",
+    gap: 12,
   },
   actionCard: {
     flex: 1,
+    minWidth: 100,
     backgroundColor: "#1e293b",
     borderRadius: 16,
     padding: 20,
