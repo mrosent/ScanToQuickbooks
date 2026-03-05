@@ -8,6 +8,8 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Platform,
+  InteractionManager,
   type LayoutChangeEvent,
   type GestureResponderEvent,
 } from "react-native";
@@ -78,7 +80,7 @@ export default function DashboardScreen() {
 
   const requestMediaLibraryPermission = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
+    if (status !== "granted" && status !== "limited") {
       Alert.alert(
         "Photo Access Required",
         "Please grant photo library permission to upload documents."
@@ -88,11 +90,19 @@ export default function DashboardScreen() {
     return true;
   };
 
+  // Pre-request permissions on mount so the first button tap opens the picker immediately
+  useEffect(() => {
+    void ImagePicker.requestCameraPermissionsAsync();
+    void ImagePicker.requestMediaLibraryPermissionsAsync();
+  }, []);
+
   const handleTakePhoto = async () => {
     setIsLoading(true);
     try {
       const hasPermission = await requestCameraPermission();
       if (!hasPermission) return;
+
+      await new Promise<void>((r) => InteractionManager.runAfterInteractions(r));
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
@@ -141,6 +151,8 @@ export default function DashboardScreen() {
       const hasPermission = await requestMediaLibraryPermission();
       if (!hasPermission) return;
 
+      await new Promise<void>((r) => InteractionManager.runAfterInteractions(r));
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,
@@ -178,9 +190,11 @@ export default function DashboardScreen() {
       const hasPermission = await requestMediaLibraryPermission();
       if (!hasPermission) return;
 
+      await new Promise<void>((r) => InteractionManager.runAfterInteractions(r));
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["videos"],
-        allowsEditing: false,
+        allowsEditing: Platform.OS === "ios", // iOS 16+ needs allowsEditing for library to open reliably
       });
 
       if (!result.canceled && result.assets[0]) {
@@ -231,6 +245,8 @@ export default function DashboardScreen() {
       try {
         const hasPermission = await requestMediaLibraryPermission();
         if (!hasPermission) return;
+
+        await new Promise<void>((r) => InteractionManager.runAfterInteractions(r));
 
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ["images"],
@@ -818,6 +834,7 @@ export default function DashboardScreen() {
             style={styles.actionCard}
             onPress={handleCapturePress}
             disabled={isLoading || isExtracting}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
             <View style={styles.actionIconWrapper}>
               <Ionicons
@@ -834,6 +851,7 @@ export default function DashboardScreen() {
             style={styles.actionCard}
             onPress={handleUploadImage}
             disabled={isLoading || isExtracting}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
             <View style={styles.actionIconWrapper}>
               <Ionicons name="documents-outline" size={24} color="#38bdf8" />
@@ -845,6 +863,7 @@ export default function DashboardScreen() {
               style={styles.actionCard}
               onPress={handlePickVideo}
               disabled={isLoading || isExtracting}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
               <View style={styles.actionIconWrapper}>
                 <Ionicons name="videocam-outline" size={24} color="#38bdf8" />
