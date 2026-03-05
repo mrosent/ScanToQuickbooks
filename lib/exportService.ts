@@ -103,7 +103,7 @@ export async function exportDocument(
     case "docx": {
       try {
         const html = content.startsWith("<") && content.includes(">") ? content : markdownToHtml(content);
-        const HTMLToDocx = (await import("html-to-docx")).default;
+        const HTMLToDocx = (await import("html-to-docx-lite")).default;
         const docxResult = await HTMLToDocx(html, null, {
           table: { row: { cantSplit: true } },
           font: "Arial",
