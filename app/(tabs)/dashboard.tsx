@@ -10,6 +10,8 @@ import {
   ScrollView,
   Platform,
   InteractionManager,
+  Linking,
+  AppState,
   type LayoutChangeEvent,
   type GestureResponderEvent,
 } from "react-native";
@@ -66,12 +68,66 @@ export default function DashboardScreen() {
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const multiCaptureDirRef = useRef<string | null>(null);
 
+  const [permissionsGranted, setPermissionsGranted] = useState<boolean | null>(null);
+  const [isRequestingPermissions, setIsRequestingPermissions] = useState(false);
+
+  const checkPermissions = async () => {
+    const [camera, media] = await Promise.all([
+      ImagePicker.getCameraPermissionsAsync(),
+      ImagePicker.getMediaLibraryPermissionsAsync(),
+    ]);
+    const cameraOk = camera.status === "granted";
+    const mediaOk = media.status === "granted" || media.status === "limited";
+    setPermissionsGranted(cameraOk && mediaOk);
+  };
+
+  useEffect(() => {
+    void checkPermissions();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void checkPermissions();
+    });
+    return () => sub.remove();
+  }, []);
+
+  const handleGrantPermissions = async () => {
+    setIsRequestingPermissions(true);
+    try {
+      const [camera, media] = await Promise.all([
+        ImagePicker.requestCameraPermissionsAsync(),
+        ImagePicker.requestMediaLibraryPermissionsAsync(),
+      ]);
+      const cameraOk = camera.status === "granted";
+      const mediaOk = media.status === "granted" || media.status === "limited";
+      if (cameraOk && mediaOk) {
+        setPermissionsGranted(true);
+      } else {
+        const denied = [];
+        if (camera.status !== "granted") denied.push("Camera");
+        if (media.status !== "granted" && media.status !== "limited") denied.push("Photos");
+        Alert.alert(
+          "Permissions Required",
+          `POS Scanner needs ${denied.join(" and ")} access to scan documents. Please enable them in Settings.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } finally {
+      setIsRequestingPermissions(false);
+    }
+  };
+
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
         "Camera Access Required",
-        "Please grant camera permission to scan documents."
+        "Please grant camera permission to scan documents.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
       );
       return false;
     }
@@ -83,18 +139,16 @@ export default function DashboardScreen() {
     if (status !== "granted" && status !== "limited") {
       Alert.alert(
         "Photo Access Required",
-        "Please grant photo library permission to upload documents."
+        "Please grant photo library permission to upload documents.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ]
       );
       return false;
     }
     return true;
   };
-
-  // Pre-request permissions on mount so the first button tap opens the picker immediately
-  useEffect(() => {
-    void ImagePicker.requestCameraPermissionsAsync();
-    void ImagePicker.requestMediaLibraryPermissionsAsync();
-  }, []);
 
   const handleTakePhoto = async () => {
     setIsLoading(true);
@@ -549,6 +603,38 @@ export default function DashboardScreen() {
     }
   };
 
+  if (permissionsGranted !== true) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.permissionsGate}>
+          <Ionicons name="camera-outline" size={64} color="#38bdf8" style={{ marginBottom: 16 }} />
+          <Text style={styles.permissionsTitle}>Camera & Photos Access</Text>
+          <Text style={styles.permissionsMessage}>
+            POS Scanner needs access to your camera and photo library to scan documents and receipts. Tap below to allow.
+          </Text>
+          <Pressable
+            style={[styles.grantPermissionsButton, isRequestingPermissions && styles.buttonDisabled]}
+            onPress={handleGrantPermissions}
+            disabled={isRequestingPermissions}
+          >
+            {isRequestingPermissions ? (
+              <ActivityIndicator size="small" color="#0f172a" />
+            ) : (
+              <Text style={styles.grantPermissionsButtonText}>Allow Camera & Photos</Text>
+            )}
+          </Pressable>
+          <Pressable
+            style={styles.openSettingsButton}
+            onPress={() => Linking.openSettings()}
+            disabled={isRequestingPermissions}
+          >
+            <Text style={styles.openSettingsButtonText}>Open Settings</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       {/* Main scan area */}
@@ -890,6 +976,49 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0f172a",
+  },
+  permissionsGate: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  permissionsTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#f8fafc",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  permissionsMessage: {
+    fontSize: 16,
+    color: "#94a3b8",
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  grantPermissionsButton: {
+    backgroundColor: "#38bdf8",
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 16,
+    minWidth: 200,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  grantPermissionsButtonText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  openSettingsButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  openSettingsButtonText: {
+    fontSize: 15,
+    color: "#94a3b8",
+    fontWeight: "600",
   },
   scanSection: {
     flex: 1,
